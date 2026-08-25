@@ -82,13 +82,26 @@ async function main() {
     trello(`/boards/${config.board}/labels?fields=id,name`),
     trello(`/boards/${config.board}/members?fields=id,username`),
   ]);
-  let created = 0, updated = 0, skipped = 0;
+  let created = 0, updated = 0;
+  const skipped = { notIssue: 0, otherRepository: 0, unknownStatus: 0 };
 
   for (const item of items) {
     const issue = item.content;
-    if (!issue || issue.repository.nameWithOwner.toLowerCase() !== config.repository) { skipped++; continue; }
+    if (!issue?.repository) {
+      skipped.notIssue++;
+      continue;
+    }
+    if (issue.repository.nameWithOwner.toLowerCase() !== config.repository) {
+      skipped.otherRepository++;
+      console.log(`Skipping ${issue.url}: belongs to ${issue.repository.nameWithOwner}, not ${config.repository}`);
+      continue;
+    }
     const idList = targetList(item.fieldValueByName?.name);
-    if (!idList) { skipped++; continue; }
+    if (!idList) {
+      skipped.unknownStatus++;
+      console.log(`Skipping ${issue.url}: unsupported status ${JSON.stringify(item.fieldValueByName?.name ?? "No status")}`);
+      continue;
+    }
     const prefix = `[#${issue.number}]`;
     const card = cards.find(candidate => candidate.name.startsWith(prefix));
     const issueLabels = new Set(issue.labels.nodes.map(label => label.name.toLowerCase()));
@@ -109,9 +122,14 @@ async function main() {
     }
   }
 
-  const result = `${created} created, ${updated} updated, ${skipped} skipped`;
+  const skippedTotal = skipped.notIssue + skipped.otherRepository + skipped.unknownStatus;
+  const result = `${created} created, ${updated} updated, ${skippedTotal} skipped`;
+  const details = `Draft/non-Issue: ${skipped.notIssue}; other repository: ${skipped.otherRepository}; unsupported/no status: ${skipped.unknownStatus}`;
   console.log(result);
-  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Trello reconciliation\n\n${result}\n`);
+  console.log(details);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Trello reconciliation\n\n${result}\n\n${details}\n`);
+  }
 }
 
 main().catch(error => { console.error(`::error::${error.message}`); process.exitCode = 1; });

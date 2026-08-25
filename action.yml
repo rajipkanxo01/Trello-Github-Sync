@@ -1,0 +1,11 @@
+name: GitHub Issue to Trello
+description: Synchronize GitHub Issues with Trello cards
+author: Rajib Paudyal
+
+runs:
+  using: node24
+  main: src/trello-sync.mjs
+
+branding:
+  icon: refresh-cw
+  color: blue

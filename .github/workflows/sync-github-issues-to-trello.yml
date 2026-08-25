@@ -7,45 +7,147 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: trello-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
-  create-card:
-    if: github.event.action == 'opened'
+  sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: CyanRYi/trello-github-integration@3.0.0
-        with:
-          trello-action: create_card
-        env: &trello-env
+      - name: Synchronize Trello card
+        uses: actions/github-script@v9
+        env:
           TRELLO_API_KEY: ${{ secrets.TRELLO_API_KEY }}
           TRELLO_API_TOKEN: ${{ secrets.TRELLO_API_TOKEN }}
           TRELLO_BOARD_ID: ${{ secrets.TRELLO_BOARD_ID }}
           TRELLO_TODO_LIST_ID: ${{ secrets.TRELLO_TODO_LIST_ID }}
           TRELLO_DONE_LIST_ID: ${{ secrets.TRELLO_DONE_LIST_ID }}
           TRELLO_MEMBER_MAP: ${{ secrets.TRELLO_MEMBER_MAP }}
-
-  edit-card:
-    if: contains(fromJSON('["edited","labeled","unlabeled","assigned","unassigned"]'), github.event.action)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: CyanRYi/trello-github-integration@3.0.0
         with:
-          trello-action: edit_card
-        env: *trello-env
+          script: |
+            const required = [
+              "TRELLO_API_KEY",
+              "TRELLO_API_TOKEN",
+              "TRELLO_BOARD_ID",
+              "TRELLO_TODO_LIST_ID",
+              "TRELLO_DONE_LIST_ID",
+              "TRELLO_MEMBER_MAP",
+            ];
+            const missing = required.filter(name => !process.env[name]);
+            if (missing.length) {
+              core.setFailed(`Missing GitHub Actions secrets: ${missing.join(", ")}`);
+              return;
+            }
 
-  close-card:
-    if: github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: CyanRYi/trello-github-integration@3.0.0
-        with:
-          trello-action: move_card_to_done
-        env: *trello-env
+            let memberMap;
+            try {
+              memberMap = JSON.parse(process.env.TRELLO_MEMBER_MAP)
+                .map(entry => entry.toLowerCase().split(":"))
+                .reduce((map, [githubLogin, trelloUsername]) => {
+                  if (githubLogin && trelloUsername) map[githubLogin] = trelloUsername;
+                  return map;
+                }, {});
+            } catch (error) {
+              core.setFailed("TRELLO_MEMBER_MAP must be JSON such as [] or [\"github:trello\"]");
+              return;
+            }
 
-  reopen-card:
-    if: github.event.action == 'reopened'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: CyanRYi/trello-github-integration@3.0.0
-        with:
-          trello-action: move_card_to_todo
-        env: *trello-env
+            const key = process.env.TRELLO_API_KEY;
+            const token = process.env.TRELLO_API_TOKEN;
+            const boardId = process.env.TRELLO_BOARD_ID;
+            const issue = context.payload.issue;
+            const action = context.payload.action;
+            const prefix = `[#${issue.number}]`;
+
+            async function trello(path, options = {}) {
+              const separator = path.includes("?") ? "&" : "?";
+              const url = `https://api.trello.com/1${path}${separator}key=${encodeURIComponent(key)}&token=${encodeURIComponent(token)}`;
+              const response = await fetch(url, {
+                method: options.method || "GET",
+                headers: options.body ? { "Content-Type": "application/json" } : {},
+                body: options.body ? JSON.stringify(options.body) : undefined,
+              });
+              const text = await response.text();
+              let data;
+              try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+              if (!response.ok) {
+                throw new Error(`Trello ${options.method || "GET"} ${path} failed (${response.status}): ${typeof data === "string" ? data : JSON.stringify(data)}`);
+              }
+              return data;
+            }
+
+            async function findCard() {
+              const cards = await trello(`/boards/${boardId}/cards?fields=id,name,idList`);
+              return cards.find(card => card.name.startsWith(prefix));
+            }
+
+            async function issueFields() {
+              const [boardLabels, boardMembers] = await Promise.all([
+                trello(`/boards/${boardId}/labels?fields=id,name`),
+                trello(`/boards/${boardId}/members?fields=id,username`),
+              ]);
+              const wantedLabels = new Set(issue.labels.map(label => label.name.toLowerCase()));
+              const idLabels = boardLabels
+                .filter(label => label.name && wantedLabels.has(label.name.toLowerCase()))
+                .map(label => label.id);
+              const wantedMembers = new Set(
+                issue.assignees
+                  .map(assignee => memberMap[assignee.login.toLowerCase()])
+                  .filter(Boolean)
+              );
+              const idMembers = boardMembers
+                .filter(member => wantedMembers.has(member.username.toLowerCase()))
+                .map(member => member.id);
+              return { idLabels, idMembers };
+            }
+
+            if (action === "opened") {
+              const fields = await issueFields();
+              await trello("/cards", {
+                method: "POST",
+                body: {
+                  idList: process.env.TRELLO_TODO_LIST_ID,
+                  name: `${prefix} ${issue.title}`,
+                  desc: `${issue.body || ""}\n\nGitHub: ${issue.html_url}`.trim(),
+                  idMembers: fields.idMembers.join(","),
+                  idLabels: fields.idLabels.join(","),
+                  pos: "bottom",
+                },
+              });
+              core.info(`Created Trello card for issue #${issue.number}`);
+              return;
+            }
+
+            const card = await findCard();
+            if (!card) {
+              core.setFailed(`No Trello card beginning with ${prefix} was found`);
+              return;
+            }
+
+            if (["edited", "labeled", "unlabeled", "assigned", "unassigned"].includes(action)) {
+              const fields = await issueFields();
+              await trello(`/cards/${card.id}`, {
+                method: "PUT",
+                body: {
+                  name: `${prefix} ${issue.title}`,
+                  desc: `${issue.body || ""}\n\nGitHub: ${issue.html_url}`.trim(),
+                  idMembers: fields.idMembers.join(","),
+                  idLabels: fields.idLabels.join(","),
+                },
+              });
+              core.info(`Updated Trello card for issue #${issue.number}`);
+            } else if (action === "closed") {
+              await trello(`/cards/${card.id}`, {
+                method: "PUT",
+                body: { idList: process.env.TRELLO_DONE_LIST_ID },
+              });
+              core.info(`Moved Trello card for issue #${issue.number} to Done`);
+            } else if (action === "reopened") {
+              await trello(`/cards/${card.id}`, {
+                method: "PUT",
+                body: { idList: process.env.TRELLO_TODO_LIST_ID },
+              });
+              core.info(`Moved Trello card for issue #${issue.number} to Todo`);
+            }

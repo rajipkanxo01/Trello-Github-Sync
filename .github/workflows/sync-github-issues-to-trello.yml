@@ -1,0 +1,51 @@
+name: Sync GitHub Issues to Trello
+
+on:
+  issues:
+    types: [opened, edited, labeled, unlabeled, assigned, unassigned, closed, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  create-card:
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: CyanRYi/trello-github-integration@3.0.0
+        with:
+          trello-action: create_card
+        env: &trello-env
+          TRELLO_API_KEY: ${{ secrets.TRELLO_API_KEY }}
+          TRELLO_API_TOKEN: ${{ secrets.TRELLO_API_TOKEN }}
+          TRELLO_BOARD_ID: ${{ vars.TRELLO_BOARD_ID }}
+          TRELLO_TODO_LIST_ID: ${{ vars.TRELLO_TODO_LIST_ID }}
+          TRELLO_DONE_LIST_ID: ${{ vars.TRELLO_DONE_LIST_ID }}
+          TRELLO_MEMBER_MAP: ${{ secrets.TRELLO_MEMBER_MAP }}
+
+  edit-card:
+    if: contains(fromJSON('["edited","labeled","unlabeled","assigned","unassigned"]'), github.event.action)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: CyanRYi/trello-github-integration@3.0.0
+        with:
+          trello-action: edit_card
+        env: *trello-env
+
+  close-card:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: CyanRYi/trello-github-integration@3.0.0
+        with:
+          trello-action: move_card_to_done
+        env: *trello-env
+
+  reopen-card:
+    if: github.event.action == 'reopened'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: CyanRYi/trello-github-integration@3.0.0
+        with:
+          trello-action: move_card_to_todo
+        env: *trello-env

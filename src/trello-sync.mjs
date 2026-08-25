@@ -1,94 +1,117 @@
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile } from "node:fs/promises";
 
-const API = "https://api.trello.com/1";
-const UPDATE_ACTIONS = new Set(["opened", "edited", "labeled", "unlabeled", "assigned", "unassigned"]);
-const REQUIRED = ["TRELLO_API_KEY", "TRELLO_API_TOKEN", "TRELLO_BOARD_ID", "TRELLO_TODO_LIST_ID", "TRELLO_DONE_LIST_ID", "TRELLO_MEMBER_MAP"];
+const required = ["TRELLO_API_KEY", "TRELLO_API_TOKEN", "TRELLO_BOARD_ID", "TRELLO_TODO_LIST_ID", "TRELLO_INPROGRESS_LIST_ID", "TRELLO_DONE_LIST_ID", "TRELLO_MEMBER_MAP", "PROJECT_TOKEN", "GH_PROJECT_OWNER", "GH_PROJECT_NUMBER", "GITHUB_REPOSITORY"];
+const missing = required.filter(name => !process.env[name]);
+if (missing.length) throw new Error(`Missing configuration: ${missing.join(", ")}`);
 
-function config() {
-  const missing = REQUIRED.filter(name => !process.env[name]);
-  if (missing.length) throw new Error(`Missing GitHub Actions secrets: ${missing.join(", ")}`);
-  let entries;
-  try { entries = JSON.parse(process.env.TRELLO_MEMBER_MAP); } catch { entries = null; }
-  if (!Array.isArray(entries)) throw new Error('TRELLO_MEMBER_MAP must be JSON such as [] or ["github:trello"]');
-  return {
-    key: process.env.TRELLO_API_KEY,
-    token: process.env.TRELLO_API_TOKEN,
-    board: process.env.TRELLO_BOARD_ID,
-    todo: process.env.TRELLO_TODO_LIST_ID,
-    done: process.env.TRELLO_DONE_LIST_ID,
-    members: Object.fromEntries(entries.map(entry => {
-      const [github, trello] = entry.toLowerCase().split(":");
-      if (!github || !trello) throw new Error(`Invalid member mapping: ${entry}`);
-      return [github.trim(), trello.trim()];
-    })),
-  };
+let memberMap;
+try {
+  memberMap = Object.fromEntries(JSON.parse(process.env.TRELLO_MEMBER_MAP).map(entry => {
+    const [github, trello] = entry.toLowerCase().split(":");
+    if (!github || !trello) throw new Error();
+    return [github.trim(), trello.trim()];
+  }));
+} catch {
+  throw new Error('TRELLO_MEMBER_MAP must be JSON such as [] or ["github:trello"]');
 }
 
-async function request(settings, path, { method = "GET", body } = {}) {
+const config = {
+  key: process.env.TRELLO_API_KEY,
+  token: process.env.TRELLO_API_TOKEN,
+  board: process.env.TRELLO_BOARD_ID,
+  projectOwner: process.env.GH_PROJECT_OWNER,
+  projectNumber: Number(process.env.GH_PROJECT_NUMBER),
+  repository: process.env.GITHUB_REPOSITORY.toLowerCase(),
+  lists: {
+    todo: process.env.TRELLO_TODO_LIST_ID,
+    progress: process.env.TRELLO_INPROGRESS_LIST_ID,
+    done: process.env.TRELLO_DONE_LIST_ID,
+  },
+};
+
+async function trello(path, { method = "GET", body } = {}) {
   const separator = path.includes("?") ? "&" : "?";
-  const auth = `key=${encodeURIComponent(settings.key)}&token=${encodeURIComponent(settings.token)}`;
-  const response = await fetch(`${API}${path}${separator}${auth}`, {
+  const auth = `key=${encodeURIComponent(config.key)}&token=${encodeURIComponent(config.token)}`;
+  return api(`https://api.trello.com/1${path}${separator}${auth}`, { method, body }, `Trello ${method} ${path}`);
+}
+
+async function api(url, { method = "GET", body, headers = {} } = {}, label = method) {
+  const response = await fetch(url, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...headers },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await response.text();
   let data;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!response.ok) throw new Error(`Trello ${method} ${path} failed (${response.status}): ${typeof data === "string" ? data : JSON.stringify(data)}`);
+  if (!response.ok) throw new Error(`${label} failed (${response.status}): ${typeof data === "string" ? data : JSON.stringify(data)}`);
   return data;
 }
 
-async function summary(issue, action, result) {
-  if (!process.env.GITHUB_STEP_SUMMARY) return;
-  const markdown = `## Trello synchronization\n\n| | |\n|---|---|\n| Issue | [#${issue.number}](${issue.html_url}) ${issue.title} |\n| Trigger | ${action} |\n| Result | ${result} |\n`;
-  await appendFile(process.env.GITHUB_STEP_SUMMARY, markdown);
+async function projectItems() {
+  const query = `query($login:String!,$number:Int!,$after:String){user(login:$login){projectV2(number:$number){items(first:100,after:$after){nodes{fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}} content{... on Issue{number title body url state repository{nameWithOwner} labels(first:100){nodes{name}} assignees(first:100){nodes{login}}}}} pageInfo{hasNextPage endCursor}}}}}`;
+  const items = [];
+  let after = null;
+  do {
+    const result = await api("https://api.github.com/graphql", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.PROJECT_TOKEN}`, "X-GitHub-Api-Version": "2022-11-28" },
+      body: { query, variables: { login: config.projectOwner, number: config.projectNumber, after } },
+    }, "GitHub Project query");
+    if (result.errors) throw new Error(`GitHub Project query failed: ${JSON.stringify(result.errors)}`);
+    const connection = result.data?.user?.projectV2?.items;
+    if (!connection) throw new Error("Project not found or PROJECT_TOKEN cannot access it");
+    items.push(...connection.nodes);
+    after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
+  } while (after);
+  return items;
+}
+
+function targetList(status) {
+  const value = status?.toLowerCase();
+  if (["backlog", "ready", "todo", "to do"].includes(value)) return config.lists.todo;
+  if (["in progress", "in review", "review"].includes(value)) return config.lists.progress;
+  if (["done", "complete", "completed"].includes(value)) return config.lists.done;
+  return null;
 }
 
 async function main() {
-  const settings = config();
-  const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
-  const { action, issue } = event;
-  if (!issue) throw new Error("This action must be triggered by a GitHub Issue event");
-  const prefix = `[#${issue.number}]`;
-  const cards = await request(settings, `/boards/${settings.board}/cards?fields=id,name,idList`);
-  const card = cards.find(candidate => candidate.name.startsWith(prefix));
+  const [items, cards, labels, members] = await Promise.all([
+    projectItems(),
+    trello(`/boards/${config.board}/cards?fields=id,name,idList`),
+    trello(`/boards/${config.board}/labels?fields=id,name`),
+    trello(`/boards/${config.board}/members?fields=id,username`),
+  ]);
+  let created = 0, updated = 0, skipped = 0;
 
-  async function fields() {
-    const [labels, members] = await Promise.all([
-      request(settings, `/boards/${settings.board}/labels?fields=id,name`),
-      request(settings, `/boards/${settings.board}/members?fields=id,username`),
-    ]);
-    const labelNames = new Set(issue.labels.map(label => label.name.toLowerCase()));
-    const usernames = new Set(issue.assignees.map(a => settings.members[a.login.toLowerCase()]).filter(Boolean));
-    return {
+  for (const item of items) {
+    const issue = item.content;
+    if (!issue || issue.repository.nameWithOwner.toLowerCase() !== config.repository) { skipped++; continue; }
+    const idList = targetList(item.fieldValueByName?.name);
+    if (!idList) { skipped++; continue; }
+    const prefix = `[#${issue.number}]`;
+    const card = cards.find(candidate => candidate.name.startsWith(prefix));
+    const issueLabels = new Set(issue.labels.nodes.map(label => label.name.toLowerCase()));
+    const usernames = new Set(issue.assignees.nodes.map(a => memberMap[a.login.toLowerCase()]).filter(Boolean));
+    const body = {
       name: `${prefix} ${issue.title}`,
-      desc: `${issue.body || ""}\n\nGitHub: ${issue.html_url}`.trim(),
-      idLabels: labels.filter(l => l.name && labelNames.has(l.name.toLowerCase())).map(l => l.id).join(","),
+      desc: `${issue.body || ""}\n\nGitHub: ${issue.url}`.trim(),
+      idList,
+      idLabels: labels.filter(l => l.name && issueLabels.has(l.name.toLowerCase())).map(l => l.id).join(","),
       idMembers: members.filter(m => usernames.has(m.username.toLowerCase())).map(m => m.id).join(","),
     };
-  }
-
-  if (action === "opened" && !card) {
-    await request(settings, "/cards", { method: "POST", body: { ...(await fields()), idList: settings.todo, pos: "bottom" } });
-    await summary(issue, action, "Card created in Todo");
-  } else {
-    if (!card) throw new Error(`No Trello card beginning with ${prefix} was found`);
-    if (UPDATE_ACTIONS.has(action)) {
-      await request(settings, `/cards/${card.id}`, { method: "PUT", body: await fields() });
-      await summary(issue, action, "Card details synchronized");
-    } else if (action === "closed") {
-      await request(settings, `/cards/${card.id}`, { method: "PUT", body: { idList: settings.done } });
-      await summary(issue, action, "Card moved to Done");
-    } else if (action === "reopened") {
-      await request(settings, `/cards/${card.id}`, { method: "PUT", body: { idList: settings.todo } });
-      await summary(issue, action, "Card moved to Todo");
+    if (card) {
+      await trello(`/cards/${card.id}`, { method: "PUT", body });
+      updated++;
+    } else {
+      await trello("/cards", { method: "POST", body: { ...body, pos: "bottom" } });
+      created++;
     }
   }
-  console.log(`Trello synchronized for issue #${issue.number} (${action})`);
+
+  const result = `${created} created, ${updated} updated, ${skipped} skipped`;
+  console.log(result);
+  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Trello reconciliation\n\n${result}\n`);
 }
 
-main().catch(error => {
-  console.error(`::error::${error.message}`);
-  process.exitCode = 1;
-});
+main().catch(error => { console.error(`::error::${error.message}`); process.exitCode = 1; });

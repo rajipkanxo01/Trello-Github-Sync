@@ -1,9 +1,11 @@
-name: Trello sync
-run-name: Trello • ${{ github.event.action }} • #${{ github.event.issue.number }} ${{ github.event.issue.title }}
+name: GitHub Project → Trello
+run-name: Project → Trello • ${{ github.event_name == 'workflow_dispatch' && 'Manual synchronization' || 'Scheduled synchronization' }}
 
 on:
-  issues:
-    types: [opened, edited, labeled, unlabeled, assigned, unassigned, closed, reopened]
+  schedule:
+    - cron: "0 9,12,16 * * 1-5"
+      timezone: Europe/Copenhagen
+  workflow_dispatch:
   workflow_call:
     secrets:
       TRELLO_API_KEY: { required: true }
@@ -11,22 +13,26 @@ on:
       TRELLO_BOARD_ID: { required: true }
       TRELLO_TODO_LIST_ID: { required: true }
       TRELLO_DONE_LIST_ID: { required: true }
+      TRELLO_INPROGRESS_LIST_ID: { required: true }
       TRELLO_MEMBER_MAP: { required: true }
+      PROJECT_TOKEN: { required: true }
+      GH_PROJECT_OWNER: { required: true }
+      GH_PROJECT_NUMBER: { required: true }
 
 permissions:
   contents: read
 
 concurrency:
-  group: trello-issue-${{ github.event.issue.number }}
+  group: trello-reconciliation
   cancel-in-progress: false
 
 jobs:
   sync:
-    name: Synchronize issue #${{ github.event.issue.number }}
+    name: Reconcile project statuses and cards
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Apply “${{ github.event.action }}” to Trello
+      - name: Create, update, and move Trello cards
         uses: rajipkanxo01/Trello-Github-Sync@main
         env:
           TRELLO_API_KEY: ${{ secrets.TRELLO_API_KEY }}
@@ -34,4 +40,8 @@ jobs:
           TRELLO_BOARD_ID: ${{ secrets.TRELLO_BOARD_ID }}
           TRELLO_TODO_LIST_ID: ${{ secrets.TRELLO_TODO_LIST_ID }}
           TRELLO_DONE_LIST_ID: ${{ secrets.TRELLO_DONE_LIST_ID }}
+          TRELLO_INPROGRESS_LIST_ID: ${{ secrets.TRELLO_INPROGRESS_LIST_ID }}
           TRELLO_MEMBER_MAP: ${{ secrets.TRELLO_MEMBER_MAP }}
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          GH_PROJECT_OWNER: ${{ secrets.GH_PROJECT_OWNER }}
+          GH_PROJECT_NUMBER: ${{ secrets.GH_PROJECT_NUMBER }}

@@ -49,7 +49,8 @@ async function api(url, { method = "GET", body, headers = {} } = {}, label = met
 }
 
 async function projectItems() {
-  const query = `query($login:String!,$number:Int!,$after:String){user(login:$login){projectV2(number:$number){items(first:100,after:$after){nodes{fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}} content{... on Issue{number title body url state repository{nameWithOwner} labels(first:100){nodes{name}} assignees(first:100){nodes{login}}}}} pageInfo{hasNextPage endCursor}}}}}`;
+  const projectFields = `projectV2(number:$number){items(first:100,after:$after){nodes{fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}} content{... on Issue{number title body url state repository{nameWithOwner} labels(first:100){nodes{name}} assignees(first:100){nodes{login}}}}} pageInfo{hasNextPage endCursor}}}`;
+  const query = `query($login:String!,$number:Int!,$after:String){user(login:$login){${projectFields}} organization(login:$login){${projectFields}}}`;
   const items = [];
   let after = null;
   do {
@@ -59,8 +60,8 @@ async function projectItems() {
       body: { query, variables: { login: config.projectOwner, number: config.projectNumber, after } },
     }, "GitHub Project query");
     if (result.errors) throw new Error(`GitHub Project query failed: ${JSON.stringify(result.errors)}`);
-    const connection = result.data?.user?.projectV2?.items;
-    if (!connection) throw new Error("Project not found or PROJECT_TOKEN cannot access it");
+    const connection = result.data?.user?.projectV2?.items ?? result.data?.organization?.projectV2?.items;
+    if (!connection) throw new Error("Personal or organization Project not found, or PROJECT_TOKEN cannot access it");
     items.push(...connection.nodes);
     after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
   } while (after);

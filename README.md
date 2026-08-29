@@ -1,16 +1,11 @@
 # GitHub Project → Trello Sync
 
-Synchronize a personal or organization-owned GitHub Project with a Trello board
-without Zapier, a hosted server, or another automation service. Combined mode
-reacts to Issue updates immediately and periodically discovers Project-only status
-changes.
-GitHub Actions calls the GitHub GraphQL and Trello REST APIs directly.
+Keep a Trello board updated from a GitHub Project without Zapier, a hosted server
+or another automation service.
 
-## What it synchronizes
-
-Each GitHub Project Issue becomes a Trello card. Existing cards are updated on every
-run, including the Issue title, description, matching labels, mapped assignees, and
-the destination list.
+The integration creates one Trello card for each GitHub Issue in the configured
+Project. Later runs update the card's title, description, labels, assignees and
+destination list.
 
 | GitHub Project status | Trello list |
 | --- | --- |
@@ -18,91 +13,76 @@ the destination list.
 | `In progress`, `In review`, `Review` | In Progress |
 | `Done`, `Complete`, `Completed` | Done |
 
-Cards are linked to Issues through a `[#issue-number]` title prefix. Do not remove
-that prefix from synchronized Trello cards.
+Pull requests and draft Project items are ignored. Synchronized cards are identified
+by a `[#issue-number]` prefix; do not remove this prefix from Trello card titles.
 
-The included workflow uses combined synchronization:
-
-- Relevant Issue changes run the synchronization immediately.
-- Project-only changes are reconciled at 09:00, 12:00, and 16:00 on weekdays.
-- A manual run is always available from GitHub Actions.
-
-See [Choose a synchronization mode](#6-choose-a-synchronization-mode) to customize
-the triggers and interval.
-
-## Prerequisites
+## What you need
 
 - A GitHub repository with Issues enabled.
-- A personal or organization-owned GitHub Project containing Issues from that repository.
-- A Trello board with Todo, In Progress, and Done lists.
-- Admin access to configure GitHub Actions secrets.
+- A personal or organization-owned GitHub Project containing Issues from that
+  repository.
+- A Trello board with Todo, In Progress and Done lists.
+- Permission to create Actions secrets in the GitHub repository.
 - A Trello account that is a member of the destination board.
-
-Draft Project items and pull requests are not synchronized.
 
 ## 1. Find the GitHub Project owner and number
 
-Open the Project and inspect its URL:
+Open the GitHub Project and inspect its URL.
+
+For a personal Project:
 
 ```text
 https://github.com/users/USERNAME/projects/5/views/1
 ```
 
-- Project owner: `USERNAME`
-- Project number: `5`
-- `1` after `/views/` is the view number and is not used.
+- `GH_PROJECT_OWNER`: `USERNAME`
+- `GH_PROJECT_NUMBER`: `5`
 
-For an organization Project, the URL looks like:
+For an organization Project:
 
 ```text
 https://github.com/orgs/ORGANIZATION/projects/5/views/1
 ```
 
-- Project owner: `ORGANIZATION`
-- Project number: `5`
+- `GH_PROJECT_OWNER`: `ORGANIZATION`
+- `GH_PROJECT_NUMBER`: `5`
 
-The integration uses GitHub's unified repository-owner lookup, so the same
-configuration supports both personal and organization-owned Projects.
+Use the owner of the **Project**, which may differ from the repository owner. The
+number following `/views/` is not the Project number.
 
-## 2. Create the GitHub Project token
+## 2. Create a GitHub token
 
 Open **GitHub → Settings → Developer settings → Personal access tokens → Tokens
 (classic) → Generate new token (classic)**.
 
-Select only the access needed by this integration:
+Enable:
 
-- `repo` — required to read Issues from a private repository.
-- `read:project` — required to query Project items and Status values.
+- `read:project` to read Project items and Status values.
+- `repo` to read Issues from private repositories.
 
-The workflow reads GitHub data; it does not need the `project` write scope or the
-`workflow` scope. Choose an expiration date and rotate the token before it expires.
+The token owner must be able to view the Project and repository. If an organization
+uses SAML SSO, authorize the token for that organization. The organization must also
+permit classic personal access tokens.
 
-For an organization Project, also confirm that:
-
-- The token owner can view the Project and every repository being synchronized.
-- The organization permits classic personal access tokens.
-- If the organization uses SAML SSO, the token is authorized for that organization.
-- The `repo` scope is enabled when the organization repository is private.
-
-Copy the generated token immediately. It will be stored as `PROJECT_TOKEN` later.
+Copy the token and save it later as `PROJECT_TOKEN`.
 
 ## 3. Create a Trello API key and token
 
 1. Open [Trello app administration](https://trello.com/power-ups/admin).
 2. Create or select an app.
-3. Open its **API key** page and copy the **API Key**. Do not use the app Secret.
-4. Generate a Trello user token with this URL, replacing `YOUR_API_KEY`:
+3. Open its API key page and copy the **API Key**. Do not use the app Secret.
+4. Open the following URL after replacing `YOUR_API_KEY`:
 
 ```text
 https://trello.com/1/authorize?expiration=never&name=GitHub-Trello-Sync&scope=read,write&response_type=token&key=YOUR_API_KEY
 ```
 
-5. Select **Allow** and copy the generated token.
+5. Select **Allow** and copy the generated Trello user token.
 
-The Trello token acts as the authorizing user and must have access to the target
-board. Treat both API tokens as passwords.
+The authorizing Trello user must have access to the destination board. Treat both
+tokens as passwords.
 
-Test the Trello credentials without sharing the completed URL:
+You can verify the credentials in a browser without sharing the completed URL:
 
 ```text
 https://api.trello.com/1/members/me?key=YOUR_API_KEY&token=YOUR_API_TOKEN
@@ -116,171 +96,74 @@ List the boards accessible to the Trello token:
 https://api.trello.com/1/members/me/boards?fields=name&key=YOUR_API_KEY&token=YOUR_API_TOKEN
 ```
 
-Copy the `id` for the destination board. Then list its lists:
+Copy the `id` of the destination board, then list that board's lists:
 
 ```text
 https://api.trello.com/1/boards/YOUR_BOARD_ID/lists?fields=name&key=YOUR_API_KEY&token=YOUR_API_TOKEN
 ```
 
-Copy the IDs for the Todo, In Progress, and Done lists. Confirm that every returned
-list has the expected board ID and is not archived.
+Copy the `id` values for the Todo, In Progress and Done lists. Use list IDs—not
+label IDs—and confirm the lists are not archived.
 
-## 5. Configure GitHub Actions secrets
+## 5. Add repository secrets
 
-Open the repository and go to **Settings → Secrets and variables → Actions →
-Secrets → New repository secret**.
+In the repository whose Issues should be synchronized, open **Settings → Secrets
+and variables → Actions → New repository secret**.
 
-Add all of the following as repository secrets:
+Add every secret below:
 
 | Secret | Value |
 | --- | --- |
-| `GH_PROJECT_OWNER` | GitHub username or organization login that owns the Project |
-| `GH_PROJECT_NUMBER` | Number after `/projects/` in the Project URL |
-| `PROJECT_TOKEN` | Classic GitHub token with `repo` and `read:project` |
-| `TRELLO_API_KEY` | Trello app API Key |
-| `TRELLO_API_TOKEN` | Trello user token with `read,write` access |
+| `GH_PROJECT_OWNER` | Username or organization login that owns the Project |
+| `GH_PROJECT_NUMBER` | Number following `/projects/` in the Project URL |
+| `PROJECT_TOKEN` | GitHub token created in step 2 |
+| `TRELLO_API_KEY` | Trello API Key |
+| `TRELLO_API_TOKEN` | Trello user token |
 | `TRELLO_BOARD_ID` | Destination Trello board ID |
 | `TRELLO_TODO_LIST_ID` | Todo list ID |
 | `TRELLO_INPROGRESS_LIST_ID` | In Progress list ID |
 | `TRELLO_DONE_LIST_ID` | Done list ID |
 | `TRELLO_MEMBER_MAP` | GitHub-to-Trello username mappings as JSON |
 
-Use an empty JSON array if member synchronization is not needed:
+If assignees do not need to be synchronized, set `TRELLO_MEMBER_MAP` to:
 
 ```json
 []
 ```
 
-To synchronize assignees, use GitHub and Trello usernames—not display names:
+To synchronize assignees, map GitHub usernames to Trello usernames:
 
 ```json
 ["github-user:trello-user", "another-github-user:another-trello-user"]
 ```
 
-Mapped Trello users must already be members of the board. Matching is
-case-insensitive.
+Use usernames rather than display names. Mapped Trello users must already be board
+members. Matching is case-insensitive.
 
-## 6. Choose a synchronization mode
+## 6. Add the workflow
 
-The workflow's `on` section controls when synchronization runs:
-
-| Mode | Keep |
-| --- | --- |
-| After every Issue update | `issues` |
-| At a time interval | `schedule` |
-| Both immediate Issue updates and interval reconciliation | `issues` and `schedule` |
-
-Combined mode is recommended. Issue events update Trello promptly when Issue data
-changes, while the interval discovers GitHub Project-only status changes such as
-dragging an item from Ready to In progress or In review.
-
-`workflow_dispatch` should normally remain enabled so a user can test or reconcile
-manually; it does not count as an automatic trigger.
-
-To change the interval, edit the cron expression under `schedule`. For example,
-every 15 minutes is:
-
-```yaml
-schedule:
-  - cron: "*/15 * * * *"
-    timezone: Europe/Copenhagen
-```
-
-GitHub Actions permits scheduled runs as often as every five minutes. Scheduled
-runs can occasionally be delayed by GitHub Actions load.
-
-### Trigger examples
-
-Create `.github/workflows/trello-sync.yml` in the repository whose Issues are in
-the GitHub Project. Choose one of these `on` configurations, then use the `jobs`
-configuration from
-[Reusing it from another repository](#reusing-it-from-another-repository).
-
-Run after every relevant Issue update:
-
-```yaml
-on:
-  issues:
-    types: [opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled, milestoned, demilestoned]
-  workflow_dispatch:
-```
-
-Run every 15 minutes:
-
-```yaml
-on:
-  schedule:
-    - cron: "*/15 * * * *"
-      timezone: Europe/Copenhagen
-  workflow_dispatch:
-```
-
-Run in combined mode, immediately after Issue updates and at 09:00, 12:00, and
-16:00 on weekdays:
-
-```yaml
-on:
-  issues:
-    types: [opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled, milestoned, demilestoned]
-  schedule:
-    - cron: "0 9,12,16 * * 1-5"
-      timezone: Europe/Copenhagen
-  workflow_dispatch:
-```
-
-For example, changing an Issue title triggers the update-driven configuration
-immediately. Moving only its GitHub Project status requires interval mode.
-
-### Project status updates
-
-The `issues` event covers Issue changes such as title, description, labels,
-assignees, and open/closed state. Moving an item between statuses in a GitHub
-Project does not emit a native GitHub Actions workflow event. Use combined or
-interval mode if those moves must be discovered automatically.
-
-## 7. Configure labels
-
-The integration matches GitHub and Trello labels by name, ignoring capitalization.
-Create the equivalent labels on the Trello board before running the workflow.
-GitHub labels without a matching Trello label are ignored.
-
-## 8. Test the synchronization
-
-For this integration repository, commit and push `action.yml`,
-`src/trello-sync.mjs`, and `.github/workflows/sync-github-issues-to-trello.yml`.
-Repositories that consume the reusable workflow do not copy `action.yml` or
-`src/**`; they only add the small caller workflow shown below.
-
-1. Commit and push the applicable workflow file.
-2. Open **Actions → GitHub Project → Trello**.
-3. Select **Run workflow → Run workflow**.
-4. Open the completed run and review the **Trello reconciliation** summary.
-5. Confirm that cards were created or updated in the expected Trello lists.
-
-A successful summary resembles:
+Create this file in the repository whose Issues should be synchronized:
 
 ```text
-5 created, 3 updated, 0 skipped
+.github/workflows/trello-sync.yml
 ```
 
-## Reusing it from another repository
-
-This is the recommended installation method. Keep the implementation in this
-repository. A different repository only needs the required secrets and this small
-`.github/workflows/trello-sync.yml` caller:
+Copy the following workflow:
 
 ```yaml
 name: GitHub Project → Trello
 
 on:
-  # Combined mode handles Issue updates immediately and Project-only status
-  # changes at the next scheduled reconciliation.
+  # Issue changes synchronize immediately.
   issues:
     types: [opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled, milestoned, demilestoned]
+
+  # Project-only status changes are discovered at these scheduled times.
   schedule:
     - cron: "0 9,12,16 * * 1-5"
       timezone: Europe/Copenhagen
 
+  # Allows manual synchronization from the Actions page.
   workflow_dispatch:
 
 jobs:
@@ -299,33 +182,80 @@ jobs:
       TRELLO_MEMBER_MAP: ${{ secrets.TRELLO_MEMBER_MAP }}
 ```
 
-The Marketplace action can also be invoked directly with
-`rajipkanxo01/Trello-Github-Sync@v1`, but that lower-level option requires the
-consumer to provide all environment variables and triggers. Most users should use
-the reusable workflow above.
+Commit and push the file to the repository's default branch.
 
-## Publishing a release
+### Change the schedule
 
-This repository is structured as a single Marketplace action: `action.yml` is at
-the repository root and executes `src/trello-sync.mjs` without external runtime
-dependencies.
+The example runs at 09:00, 12:00 and 16:00 on weekdays in Copenhagen time. To
+reconcile every 15 minutes instead, replace the `schedule` section with:
 
-Release checklist for maintainers:
+```yaml
+schedule:
+  - cron: "*/15 * * * *"
+    timezone: Europe/Copenhagen
+```
 
-1. Make the repository public and confirm the default branch is up to date.
-2. Confirm the **Validate action package** workflow passes.
-3. Open `action.yml` on GitHub and select **Draft a release**.
-4. Enable **Publish this Action to the GitHub Marketplace** and accept the
-   Marketplace Developer Agreement if prompted.
-5. Publish the first semantic release as `v1.0.0` with **Project management** as
-   the primary category.
-6. Create or update the `v1` major-version tag to point at the tested `v1.0.0`
-   commit. Consumers can then receive compatible v1 updates without changing
-   their workflow.
+GitHub Project status movements do not emit a repository `issues` event. Keep the
+schedule trigger if dragging an item to In progress or In review must update Trello
+automatically. Scheduled Actions can occasionally be delayed by GitHub.
 
-Marketplace publication is optional for execution; it provides discovery. The
-public reusable workflow works independently of the Marketplace listing.
+## 7. Test the synchronization
+
+1. Open the target repository's **Actions** page.
+2. Select **GitHub Project → Trello**.
+3. Select **Run workflow → Run workflow**.
+4. Open the completed run and review the **Trello reconciliation** summary.
+5. Confirm that cards appear in the expected Trello lists.
+
+A successful run may report:
+
+```text
+5 created, 3 updated, 0 skipped
+```
+
+Afterward, test both paths:
+
+1. Edit or assign a GitHub Issue and confirm an Actions run starts immediately.
+2. Move an Issue between GitHub Project statuses and confirm Trello is updated at
+   the next scheduled run.
+
+## Troubleshooting
+
+### Project owner not found
+
+Confirm that `GH_PROJECT_OWNER` exactly matches the login in the Project URL—not
+the organization's display name. For example, a Project URL under
+`/orgs/DADIU2024/` uses `DADIU2024`.
+
+### Project not found or inaccessible
+
+Confirm that `GH_PROJECT_NUMBER` is the number following `/projects/` and that the
+owner of `PROJECT_TOKEN` can view the Project. For private repositories, ensure the
+token has `repo`; for organization resources, check SSO authorization and token
+policies.
+
+### Items are reported as draft/non-Issue
+
+Pull requests and draft items are intentionally skipped. If real Issues are also
+reported this way, the token usually cannot read the repository. Add `repo` access
+and authorize the token for the organization if required.
+
+### Cards do not move after dragging a Project item
+
+Dragging a Project item does not start an `issues` workflow. Wait for the next
+scheduled run or use **Run workflow** to reconcile immediately.
+
+### Trello returns 401 or 403
+
+Confirm that `TRELLO_API_KEY` contains the API Key, `TRELLO_API_TOKEN` contains the
+generated user token and that the token's user is a member of the destination
+board with write access.
+
+### Assignees are not synchronized
+
+Confirm that `TRELLO_MEMBER_MAP` is valid JSON, uses usernames and that every
+mapped Trello user is already a member of the board.
 
 ## License
 
-Distributed under the MIT License. See [LICENSE](LICENSE).
+Licensed under the [MIT License](LICENSE).

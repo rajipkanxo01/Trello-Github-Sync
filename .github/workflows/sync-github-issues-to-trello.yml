@@ -7,8 +7,8 @@ run-name: >-
   }}
 
 on:
-  # This checked-in workflow uses update-driven mode. Do not add `schedule`;
-  # replace `issues` as documented if changing to interval mode.
+  # Combined mode: react to Issue changes immediately and periodically reconcile
+  # GitHub Project-only changes, which do not emit an `issues` event.
   issues:
     types:
       - opened
@@ -23,6 +23,9 @@ on:
       - unlabeled
       - milestoned
       - demilestoned
+  schedule:
+    - cron: "0 9,12,16 * * 1-5"
+      timezone: Europe/Copenhagen
   workflow_dispatch:
   workflow_call:
     secrets:

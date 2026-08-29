@@ -158,18 +158,19 @@ To synchronize assignees, use GitHub and Trello usernames—not display names:
 Mapped Trello users must already be members of the board. Matching is
 case-insensitive.
 
-## 6. Choose exactly one synchronization mode
+## 6. Choose a synchronization mode
 
-The workflow's `on` section is the user's trigger configuration. Keep only the
-automatic trigger for the behavior you want:
+The workflow's `on` section controls when synchronization runs:
 
-| Choice | Keep |
+| Mode | Keep |
 | --- | --- |
 | After every Issue update | `issues` |
 | At a time interval | `schedule` |
+| Both immediate Issue updates and interval reconciliation | `issues` and `schedule` |
 
-Combining automatic trigger modes is not supported. A caller workflow must contain
-exactly one of `issues` or `schedule`. Do not put both in the same workflow.
+Combined mode is recommended. Issue events update Trello promptly when Issue data
+changes, while the interval discovers GitHub Project-only status changes such as
+dragging an item from Ready to In progress or In review.
 
 `workflow_dispatch` should normally remain enabled so a user can test or reconcile
 manually; it does not count as an automatic trigger.
@@ -189,8 +190,8 @@ runs can occasionally be delayed by GitHub Actions load.
 ### Trigger examples
 
 Create `.github/workflows/trello-sync.yml` in the repository whose Issues are in
-the GitHub Project. Choose exactly one of these `on` configurations, then use the
-`jobs` configuration from
+the GitHub Project. Choose one of these `on` configurations, then use the `jobs`
+configuration from
 [Reusing it from another repository](#reusing-it-from-another-repository).
 
 Run after every relevant Issue update:
@@ -212,6 +213,19 @@ on:
   workflow_dispatch:
 ```
 
+Run in combined mode, immediately after Issue updates and at 09:00, 12:00, and
+16:00 on weekdays:
+
+```yaml
+on:
+  issues:
+    types: [opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled, milestoned, demilestoned]
+  schedule:
+    - cron: "0 9,12,16 * * 1-5"
+      timezone: Europe/Copenhagen
+  workflow_dispatch:
+```
+
 For example, changing an Issue title triggers the update-driven configuration
 immediately. Moving only its GitHub Project status requires interval mode.
 
@@ -219,8 +233,8 @@ immediately. Moving only its GitHub Project status requires interval mode.
 
 The `issues` event covers Issue changes such as title, description, labels,
 assignees, and open/closed state. Moving an item between statuses in a GitHub
-Project does not emit a native GitHub Actions workflow event. Keep `schedule` if
-those moves must be discovered automatically.
+Project does not emit a native GitHub Actions workflow event. Use combined or
+interval mode if those moves must be discovered automatically.
 
 ## 7. Configure labels
 
@@ -230,8 +244,7 @@ GitHub labels without a matching Trello label are ignored.
 
 ## 8. Test the synchronization
 
-1. Commit and push `.github/workflows/sync-github-issues-to-trello.yml`, `action.yml`,
-   and `src/trello-sync.mjs` to the default branch.
+1. Commit and push `.github/workflows/sync-github-issues-to-trello.yml`
 2. Open **Actions → GitHub Project → Trello**.
 3. Select **Run workflow → Run workflow**.
 4. Open the completed run and review the **Trello reconciliation** summary.
@@ -252,8 +265,10 @@ reusable workflow with a small workflow file:
 name: GitHub Project → Trello
 
 on:
-  # This example uses interval mode. Replace this block with the `issues` block
-  # from the trigger examples above to use update-driven mode instead.
+  # Combined mode handles Issue updates immediately and Project-only status
+  # changes at the next scheduled reconciliation.
+  issues:
+    types: [opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled, milestoned, demilestoned]
   schedule:
     - cron: "0 9,12,16 * * 1-5"
       timezone: Europe/Copenhagen

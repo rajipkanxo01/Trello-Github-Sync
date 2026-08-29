@@ -59,8 +59,8 @@ https://github.com/orgs/ORGANIZATION/projects/5/views/1
 - Project owner: `ORGANIZATION`
 - Project number: `5`
 
-The integration automatically checks both `user.projectV2` and
-`organization.projectV2`, so the same configuration supports either ownership type.
+The integration uses GitHub's unified repository-owner lookup, so the same
+configuration supports both personal and organization-owned Projects.
 
 ## 2. Create the GitHub Project token
 

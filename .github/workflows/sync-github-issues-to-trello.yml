@@ -1,10 +1,28 @@
 name: GitHub Project → Trello
-run-name: Project → Trello • ${{ github.event_name == 'workflow_dispatch' && 'Manual synchronization' || 'Scheduled synchronization' }}
+run-name: >-
+  Project → Trello • ${{
+    github.event_name == 'workflow_dispatch' && 'Manual synchronization' ||
+    github.event_name == 'schedule' && 'Scheduled synchronization' ||
+    'Update synchronization'
+  }}
 
 on:
-  schedule:
-    - cron: "0 9,12,16 * * 1-5"
-      timezone: Europe/Copenhagen
+  # This checked-in workflow uses update-driven mode. Do not add `schedule`;
+  # replace `issues` as documented if changing to interval mode.
+  issues:
+    types:
+      - opened
+      - edited
+      - deleted
+      - transferred
+      - closed
+      - reopened
+      - assigned
+      - unassigned
+      - labeled
+      - unlabeled
+      - milestoned
+      - demilestoned
   workflow_dispatch:
   workflow_call:
     secrets:

@@ -1,8 +1,9 @@
 # GitHub Project → Trello Sync
 
 Synchronize a personal or organization-owned GitHub Project with a Trello board
-without Zapier, a hosted server, or another automation service. GitHub Actions runs
-the integration on a schedule and calls the GitHub GraphQL and Trello REST APIs directly.
+without Zapier, a hosted server, or another automation service. Users can run the
+integration after updates or at a chosen time interval.
+GitHub Actions calls the GitHub GraphQL and Trello REST APIs directly.
 
 ## What it synchronizes
 
@@ -19,8 +20,13 @@ the destination list.
 Cards are linked to Issues through a `[#issue-number]` title prefix. Do not remove
 that prefix from synchronized Trello cards.
 
-The workflow runs at 09:00, 12:00, and 16:00 on weekdays in the
-`Europe/Copenhagen` timezone. It can also be started manually from GitHub Actions.
+The included workflow currently uses update-driven synchronization:
+
+- Relevant Issue changes run the synchronization immediately.
+- A manual run is always available from GitHub Actions.
+
+See [Choose exactly one synchronization mode](#6-choose-exactly-one-synchronization-mode) to
+choose interval-driven synchronization instead.
 
 ## Prerequisites
 
@@ -152,13 +158,77 @@ To synchronize assignees, use GitHub and Trello usernames—not display names:
 Mapped Trello users must already be members of the board. Matching is
 case-insensitive.
 
-## 6. Configure labels
+## 6. Choose exactly one synchronization mode
+
+The workflow's `on` section is the user's trigger configuration. Keep only the
+automatic trigger for the behavior you want:
+
+| Choice | Keep |
+| --- | --- |
+| After every Issue update | `issues` |
+| At a time interval | `schedule` |
+
+Combining automatic trigger modes is not supported. A caller workflow must contain
+exactly one of `issues` or `schedule`. Do not put both in the same workflow.
+
+`workflow_dispatch` should normally remain enabled so a user can test or reconcile
+manually; it does not count as an automatic trigger.
+
+To change the interval, edit the cron expression under `schedule`. For example,
+every 15 minutes is:
+
+```yaml
+schedule:
+  - cron: "*/15 * * * *"
+    timezone: Europe/Copenhagen
+```
+
+GitHub Actions permits scheduled runs as often as every five minutes. Scheduled
+runs can occasionally be delayed by GitHub Actions load.
+
+### Trigger examples
+
+Create `.github/workflows/trello-sync.yml` in the repository whose Issues are in
+the GitHub Project. Choose exactly one of these `on` configurations, then use the
+`jobs` configuration from
+[Reusing it from another repository](#reusing-it-from-another-repository).
+
+Run after every relevant Issue update:
+
+```yaml
+on:
+  issues:
+    types: [opened, edited, deleted, transferred, closed, reopened, assigned, unassigned, labeled, unlabeled, milestoned, demilestoned]
+  workflow_dispatch:
+```
+
+Run every 15 minutes:
+
+```yaml
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+      timezone: Europe/Copenhagen
+  workflow_dispatch:
+```
+
+For example, changing an Issue title triggers the update-driven configuration
+immediately. Moving only its GitHub Project status requires interval mode.
+
+### Project status updates
+
+The `issues` event covers Issue changes such as title, description, labels,
+assignees, and open/closed state. Moving an item between statuses in a GitHub
+Project does not emit a native GitHub Actions workflow event. Keep `schedule` if
+those moves must be discovered automatically.
+
+## 7. Configure labels
 
 The integration matches GitHub and Trello labels by name, ignoring capitalization.
 Create the equivalent labels on the Trello board before running the workflow.
 GitHub labels without a matching Trello label are ignored.
 
-## 7. Test the synchronization
+## 8. Test the synchronization
 
 1. Commit and push `.github/workflows/sync-github-issues-to-trello.yml`, `action.yml`,
    and `src/trello-sync.mjs` to the default branch.
@@ -182,9 +252,12 @@ reusable workflow with a small workflow file:
 name: GitHub Project → Trello
 
 on:
+  # This example uses interval mode. Replace this block with the `issues` block
+  # from the trigger examples above to use update-driven mode instead.
   schedule:
     - cron: "0 9,12,16 * * 1-5"
       timezone: Europe/Copenhagen
+
   workflow_dispatch:
 
 jobs:

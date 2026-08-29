@@ -1,5 +1,5 @@
-name: GitHub Issue to Trello
-description: Synchronize GitHub Issues with Trello cards
+name: GitHub Project Trello Sync
+description: Synchronize GitHub Project issues, statuses, labels, and assignees with Trello
 author: Rajib Paudyal
 
 runs:

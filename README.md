@@ -1,8 +1,9 @@
 # GitHub Project → Trello Sync
 
 Synchronize a personal or organization-owned GitHub Project with a Trello board
-without Zapier, a hosted server, or another automation service. Users can run the
-integration after updates or at a chosen time interval.
+without Zapier, a hosted server, or another automation service. Combined mode
+reacts to Issue updates immediately and periodically discovers Project-only status
+changes.
 GitHub Actions calls the GitHub GraphQL and Trello REST APIs directly.
 
 ## What it synchronizes
@@ -20,13 +21,14 @@ the destination list.
 Cards are linked to Issues through a `[#issue-number]` title prefix. Do not remove
 that prefix from synchronized Trello cards.
 
-The included workflow currently uses update-driven synchronization:
+The included workflow uses combined synchronization:
 
 - Relevant Issue changes run the synchronization immediately.
+- Project-only changes are reconciled at 09:00, 12:00, and 16:00 on weekdays.
 - A manual run is always available from GitHub Actions.
 
-See [Choose exactly one synchronization mode](#6-choose-exactly-one-synchronization-mode) to
-choose interval-driven synchronization instead.
+See [Choose a synchronization mode](#6-choose-a-synchronization-mode) to customize
+the triggers and interval.
 
 ## Prerequisites
 
@@ -244,7 +246,12 @@ GitHub labels without a matching Trello label are ignored.
 
 ## 8. Test the synchronization
 
-1. Commit and push `.github/workflows/sync-github-issues-to-trello.yml`
+For this integration repository, commit and push `action.yml`,
+`src/trello-sync.mjs`, and `.github/workflows/sync-github-issues-to-trello.yml`.
+Repositories that consume the reusable workflow do not copy `action.yml` or
+`src/**`; they only add the small caller workflow shown below.
+
+1. Commit and push the applicable workflow file.
 2. Open **Actions → GitHub Project → Trello**.
 3. Select **Run workflow → Run workflow**.
 4. Open the completed run and review the **Trello reconciliation** summary.
@@ -258,8 +265,9 @@ A successful summary resembles:
 
 ## Reusing it from another repository
 
-Keep the full implementation in this repository. A different repository can call the
-reusable workflow with a small workflow file:
+This is the recommended installation method. Keep the implementation in this
+repository. A different repository only needs the required secrets and this small
+`.github/workflows/trello-sync.yml` caller:
 
 ```yaml
 name: GitHub Project → Trello
@@ -277,7 +285,7 @@ on:
 
 jobs:
   sync:
-    uses: rajipkanxo01/Trello-Github-Sync/.github/workflows/sync-github-issues-to-trello.yml@main
+    uses: rajipkanxo01/Trello-Github-Sync/.github/workflows/sync-github-issues-to-trello.yml@v1
     secrets:
       GH_PROJECT_OWNER: ${{ secrets.GH_PROJECT_OWNER }}
       GH_PROJECT_NUMBER: ${{ secrets.GH_PROJECT_NUMBER }}
@@ -290,3 +298,34 @@ jobs:
       TRELLO_DONE_LIST_ID: ${{ secrets.TRELLO_DONE_LIST_ID }}
       TRELLO_MEMBER_MAP: ${{ secrets.TRELLO_MEMBER_MAP }}
 ```
+
+The Marketplace action can also be invoked directly with
+`rajipkanxo01/Trello-Github-Sync@v1`, but that lower-level option requires the
+consumer to provide all environment variables and triggers. Most users should use
+the reusable workflow above.
+
+## Publishing a release
+
+This repository is structured as a single Marketplace action: `action.yml` is at
+the repository root and executes `src/trello-sync.mjs` without external runtime
+dependencies.
+
+Release checklist for maintainers:
+
+1. Make the repository public and confirm the default branch is up to date.
+2. Confirm the **Validate action package** workflow passes.
+3. Open `action.yml` on GitHub and select **Draft a release**.
+4. Enable **Publish this Action to the GitHub Marketplace** and accept the
+   Marketplace Developer Agreement if prompted.
+5. Publish the first semantic release as `v1.0.0` with **Project management** as
+   the primary category.
+6. Create or update the `v1` major-version tag to point at the tested `v1.0.0`
+   commit. Consumers can then receive compatible v1 updates without changing
+   their workflow.
+
+Marketplace publication is optional for execution; it provides discovery. The
+public reusable workflow works independently of the Marketplace listing.
+
+## License
+
+Distributed under the MIT License. See [LICENSE](LICENSE).

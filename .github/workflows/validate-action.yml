@@ -1,0 +1,34 @@
+name: Validate action package
+
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - src/**
+      - .github/workflows/**
+  push:
+    branches: [main]
+    paths:
+      - action.yml
+      - src/**
+      - .github/workflows/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate metadata and JavaScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify required package files
+        shell: bash
+        run: test -f action.yml && test -f src/trello-sync.mjs
+
+      - name: Check JavaScript syntax
+        run: node --check src/trello-sync.mjs
